@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Azure Maps: Single Location + Restaurant/Hotel + Custom Query</title>
+  <!-- Azure Maps CSS/JS -->
+  <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/2/atlas.min.css" />
+  <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/2/atlas.min.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+    #topBar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 8px;
+      z-index: 9999;
+      font-family: Arial, sans-serif;
+    }
+    #mapDiv {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+    }
+    .inline-block {
+      display: inline-block;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Top bar for user inputs -->
+  <div id="topBar">
+    <!-- Address input and button to set location -->
+    <div class="inline-block">
+      <input 
+        type="text" 
+        id="addressInput" 
+        placeholder="Enter an address or city..." 
+        style="width: 280px; padding: 5px;"
+      />
+      <button onclick="setLocation()" style="padding: 5px 10px;">Set Location</button>
+    </div>
+
+    <!-- Custom query input + button -->
+    <div class="inline-block" style="margin-left: 20px;">
+      <input 
+        type="text" 
+        id="customQueryInput" 
+        placeholder="Enter a custom search (e.g., coffee)..." 
+        style="width: 280px; padding: 5px;"
+      />
+      <button onclick="searchCustomQuery()" style="padding: 5px 10px;">Search</button>
+    </div>
+
+    <!-- Buttons for Restaurants and Accommodation -->
+    <div class="inline-block" style="margin-left: 20px;">
+      <button onclick="showRestaurants()" style="padding: 5px 10px;">Restaurants</button>
+      <button onclick="showHotels()" style="padding: 5px 10px; margin-left:10px;">Accommodation</button>
+    </div>
+  </div>
+
+  <!-- Map container -->
+  <div id="mapDiv"></div>
+
+  <script>
+    // Azure Maps key
+    const AZURE_MAPS_KEY = '5192e2c8855a3dc0ff477145d1f5a1139c63e415c1656b042f4f6989b7fd3419';
+
+    let map, datasource, symbolLayer, hoverPopup;
+    // Global variables to store fetched data
+    let restaurantData = [];
+    let hotelData = [];
+
+    function initMap() {
+      map = new atlas.Map('mapDiv', {
+        authOptions: {
+          authType: 'subscriptionKey',
+          subscriptionKey: AZURE_MAPS_KEY
+        }
+      });
+
+      map.events.add('ready', () => {
+        // Create a data source and add it to the map
+        datasource = new atlas.source.DataSource();
+        map.sources.add(datasource);
+
+        // Create a SymbolLayer with expressions for different marker types
+        symbolLayer = new atlas.layer.SymbolLayer(datasource, null, {
+          iconOptions: {
+            image: [
+              'case',
+                ['==', ['get', 'markerType'], 'selected'], 'pin-round-blue',
+                ['==', ['get', 'markerType'], 'restaurant'], 'pin-round-red',
+                ['==', ['get', 'markerType'], 'hotel'], 'pin-round-green',
+                ['==', ['get', 'markerType'], 'custom'], 'pin-round-yellow',
+                'pin-round-darkblue'
+            ],
+            allowOverlap: true
+          },
+          textOptions: {
+            textField: ['get', 'title'],
+            offset: [0, 1.2]
+          }
+        });
+        map.layers.add(symbolLayer);
+
+        // Create a popup for hover
+        hoverPopup = new atlas.Popup({
+          closeButton: false,
+          pixelOffset: [0, -30]
+        });
+        map.popups.add(hoverPopup);
+
+        // Allow user to set location by clicking on the map
+        map.events.add('click', function(e) {
+          const coords = e.position; // [lng, lat]
+          // Clear all markers except the "selected" one (if any)
+          clearNonSelectedMarkers();
+          hoverPopup.close();
+
+          // Add a "selected" marker (blue)
+          datasource.add(new atlas.data.Feature(
+            new atlas.data.Point(coords),
+            { markerType: 'selected', title: 'Selected Location' }
+          ));
+
+          map.setCamera({ center: coords, zoom: 14 });
+        });
+
+        // Popup on hover for markers (except "selected")
+        map.events.add('mouseenter', symbolLayer, (e) => {
+          if (e.shapes && e.shapes.length > 0) {
+            const shape = e.shapes[0];
+            const props = shape.getProperties();
+            if (props.markerType === 'restaurant' || 
+                props.markerType === 'hotel' ||
+                props.markerType === 'custom') {
+              const contentHTML = `
+                <div style="font-family: Arial, sans-serif;">
+                  <strong>${props.title || 'N/A'}</strong><br>
+                  Address: ${props.address || 'N/A'}<br>
+                  Rating: ${props.rating || 'N/A'}<br>
+                  Price: ${props.price || 'N/A'}<br>
+                  Hours: ${props.hours || 'N/A'}
+                </div>
+              `;
+              hoverPopup.setOptions({
+                content: contentHTML,
+                position: shape.getCoordinates()
+              });
+              hoverPopup.open(map);
+            }
+          }
+        });
+
+        map.events.add('mouseleave', symbolLayer, () => {
+          hoverPopup.close();
+        });
+      });
+    }
+
+    // Geocode an address/city with Azure Maps
+    function getCoordinates(query) {
+      const url = `https://atlas.microsoft.com/search/fuzzy/json?api-version=1.0&subscription-key=${AZURE_MAPS_KEY}&query=${encodeURIComponent(query)}&limit=1`;
+      return fetch(url)
+        .then(resp => resp.json())
+        .then(data => {
+          if (data && data.results && data.results.length > 0) {
+            const best = data.results[0];
+            return { lat: best.position.lat, lon: best.position.lon };
+          }
+          return null;
+        })
+        .catch(err => {
+          console.error("Error in getCoordinates:", err);
+          return null;
+        });
+    }
+
+    // Called when user clicks "Set Location" button
+    function setLocation() {
+      const address = document.getElementById('addressInput').value.trim();
+      if (!address) {
+        alert("Please enter an address or city.");
+        return;
+      }
+
+      getCoordinates(address).then(result => {
+        if (!result) {
+          alert("No matching address found. Please refine your input.");
+          return;
+        }
+
+        // Clear existing markers except the selected one
+        clearNonSelectedMarkers();
+        hoverPopup.close();
+
+        const { lat, lon } = result;
+        const coords = [lon, lat];
+        // Add the "selected" marker
+        datasource.add(new atlas.data.Feature(
+          new atlas.data.Point(coords),
+          { markerType: 'selected', title: 'Selected Location' }
+        ));
+        map.setCamera({ center: coords, zoom: 14 });
+
+        // Fetch restaurant and hotel data but do not display markers yet
+        fetchAndStoreRestaurantsHotels(lat, lon);
+      });
+    }
+
+    // Fetch restaurant/hotel data (store globally) based on selected location.
+    function fetchAndStoreRestaurantsHotels(lat, lon) {
+      fetch('http://127.0.0.1:5000/search_location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ latitude: lat, longitude: lon })
+      })
+      .then(resp => resp.json())
+      .then(data => {
+        if (data.error) {
+          console.error("Error from /search_location:", data.error);
+          return;
+        }
+        // Now fetch the restaurant and hotel data and store them globally
+        loadRestaurantData();
+        loadHotelData();
+      })
+      .catch(err => console.error("Error calling /search_location:", err));
+    }
+
+    // Remove markers with a specific markerType from datasource
+    function removeMarkers(markerType) {
+      const shapes = datasource.getShapes();
+      shapes.forEach(shape => {
+        if (shape.getProperties().markerType === markerType) {
+          datasource.remove(shape);
+        }
+      });
+    }
+
+    // Remove all markers except the "selected" one
+    function clearNonSelectedMarkers() {
+      const shapes = datasource.getShapes();
+      shapes.forEach(shape => {
+        if (shape.getProperties().markerType !== 'selected') {
+          datasource.remove(shape);
+        }
+      });
+    }
+
+    // Fetch restaurant data and store it globally (do not add markers yet)
+    function loadRestaurantData() {
+      fetch('http://127.0.0.1:5000/restaurant_data')
+        .then(resp => resp.json())
+        .then(data => {
+          if (data.error) {
+            console.error("Error from /restaurant_data:", data.error);
+            return;
+          }
+          restaurantData = data;
+        })
+        .catch(err => console.error("Error loading restaurant data:", err));
+    }
+
+    // Fetch hotel data and store it globally (do not add markers yet)
+    function loadHotelData() {
+      fetch('http://127.0.0.1:5000/hotel_data')
+        .then(resp => resp.json())
+        .then(data => {
+          if (data.error) {
+            console.error("Error from /hotel_data:", data.error);
+            return;
+          }
+          hotelData = data;
+        })
+        .catch(err => console.error("Error loading hotel data:", err));
+    }
+
+    // Button function: Show restaurants (red markers) and remove other non-selected markers
+    function showRestaurants() {
+      clearNonSelectedMarkers();
+      addMarkersToMap(restaurantData, 'restaurant');
+    }
+
+    // Button function: Show hotels (green markers) and remove other non-selected markers
+    function showHotels() {
+      clearNonSelectedMarkers();
+      addMarkersToMap(hotelData, 'hotel');
+    }
+
+    // Called when user enters a custom query and clicks "Search"
+    function searchCustomQuery() {
+      const query = document.getElementById('customQueryInput').value.trim();
+      if (!query) {
+        alert("Please enter something to search, e.g., coffee or arcade.");
+        return;
+      }
+
+      // Ensure a location is set
+      const selectedFeature = datasource.getShapes().find(
+        shape => shape.getProperties().markerType === 'selected'
+      );
+      if (!selectedFeature) {
+        alert("Please pick or set a location first.");
+        return;
+      }
+
+      // Remove restaurant and hotel markers before showing custom search results
+      clearNonSelectedMarkers();
+
+      const [lng, lat] = selectedFeature.getCoordinates();
+      fetch('http://127.0.0.1:5000/fetching_data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ latitude: lat, longitude: lng, amenity: query })
+      })
+      .then(resp => resp.json())
+      .then(data => {
+        if (data.error) {
+          console.error("Error from /fetching_data:", data.error);
+          return;
+        }
+        // data is expected to come from result.json; add custom markers (yellow)
+        addMarkersToMap(data, 'custom');
+        // Optionally, zoom out to show all markers
+        map.setCamera({
+          bounds: atlas.data.BoundingBox.fromData(datasource.getShapes()),
+          padding: 50
+        });
+      })
+      .catch(err => console.error("Error searching custom query:", err));
+    }
+
+    // Helper function to add multiple markers to the map with the given markerType
+    function addMarkersToMap(dataArray, markerType) {
+      if (!Array.isArray(dataArray) || dataArray.length === 0) {
+        console.warn(`No data for markerType=${markerType}.`);
+        return;
+      }
+      dataArray.forEach(item => {
+        if (!item.Longitude || !item.Latitude) {
+          console.warn("Skipping item with missing coords:", item);
+          return;
+        }
+        datasource.add(new atlas.data.Feature(
+          new atlas.data.Point([item.Longitude, item.Latitude]),
+          {
+            markerType: markerType,
+            title: item.Name || 'N/A',
+            address: item.Address || 'N/A',
+            rating: item.Rating || 'N/A',
+            price: item.Price || 'N/A',
+            hours: item["Opening Hour"] || 'N/A'
+          }
+        ));
+      });
+    }
+
+    window.onload = initMap;
+  </script>
+</body>
+</html>
