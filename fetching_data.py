@@ -5,7 +5,6 @@ import serpapi
 import json
 import traceback
 
-# Ensure we load .env from the same directory as this script
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
@@ -22,15 +21,11 @@ except ValueError as ve:
 
 amenity = sys.argv[3] if len(sys.argv) >= 4 else "restaurant"
 
-serp_api_key = os.getenv('SERPAPI_KEY')  # e.g. "e183cd43fd..."
+serp_api_key = os.getenv('SERPAPI_KEY')
 if not serp_api_key:
     print("Error: SERPAPI_KEY not found in environment variables.")
     sys.exit(1)
 
-print(f"Received coordinates: {latitude}, {longitude}")
-print(f"Searching for amenity: {amenity}")
-
-# Create SerpAPI client
 client = serpapi.Client(api_key=serp_api_key)
 
 def generate_ll_param(lat, lon, zoom=16):
@@ -45,19 +40,14 @@ def main():
             'type': 'search',
             'll': ll_param
         }
+
         results = client.search(params)
-        if "places_results" in results:
-            locations = results["places_results"][:5]
-        elif "local_results" in results:
-            locations = results["local_results"][:5]
-        elif "results" in results:
-            locations = results["results"][:5]
-        else:
-            locations = []
+        locations = results.get("places_results") or results.get("local_results") or results.get("results") or []
+        locations = locations[:5]
 
         output_data = []
         for loc in locations:
-            gps = loc.get("gps_coordinates") or {}
+            gps = loc.get("gps_coordinates", {})
             lat_val = gps.get("latitude")
             lon_val = gps.get("longitude")
             if lat_val is None or lon_val is None:
