@@ -91,7 +91,7 @@
         datasource = new atlas.source.DataSource();
         map.sources.add(datasource);
 
-        // Create a SymbolLayer with expressions for different marker types
+        // Create a SymbolLayer with marker expressions:
         symbolLayer = new atlas.layer.SymbolLayer(datasource, null, {
           iconOptions: {
             image: [
@@ -111,17 +111,16 @@
         });
         map.layers.add(symbolLayer);
 
-        // Create a popup for hover
+        // Create a popup for marker hover
         hoverPopup = new atlas.Popup({
           closeButton: false,
           pixelOffset: [0, -30]
         });
         map.popups.add(hoverPopup);
 
-        // Allow user to set location by clicking on the map
+        // Allow user to set location by clicking on the map.
         map.events.add('click', function(e) {
           const coords = e.position; // [lng, lat]
-          // Clear all markers except the "selected" one (if any)
           clearNonSelectedMarkers();
           hoverPopup.close();
 
@@ -130,11 +129,10 @@
             new atlas.data.Point(coords),
             { markerType: 'selected', title: 'Selected Location' }
           ));
-
           map.setCamera({ center: coords, zoom: 14 });
         });
 
-        // Popup on hover for markers (except "selected")
+        // Show popup on hover (for non-selected markers)
         map.events.add('mouseenter', symbolLayer, (e) => {
           if (e.shapes && e.shapes.length > 0) {
             const shape = e.shapes[0];
@@ -159,14 +157,13 @@
             }
           }
         });
-
         map.events.add('mouseleave', symbolLayer, () => {
           hoverPopup.close();
         });
       });
     }
 
-    // Geocode an address/city with Azure Maps
+    // Geocode an address/city using Azure Maps Search
     function getCoordinates(query) {
       const url = `https://atlas.microsoft.com/search/fuzzy/json?api-version=1.0&subscription-key=${AZURE_MAPS_KEY}&query=${encodeURIComponent(query)}&limit=1`;
       return fetch(url)
@@ -184,39 +181,35 @@
         });
     }
 
-    // Called when user clicks "Set Location" button
+    // Called when the user clicks "Set Location"
     function setLocation() {
       const address = document.getElementById('addressInput').value.trim();
       if (!address) {
         alert("Please enter an address or city.");
         return;
       }
-
       getCoordinates(address).then(result => {
         if (!result) {
           alert("No matching address found. Please refine your input.");
           return;
         }
-
-        // Clear existing markers except the selected one
         clearNonSelectedMarkers();
         hoverPopup.close();
 
         const { lat, lon } = result;
         const coords = [lon, lat];
-        // Add the "selected" marker
+        // Add a blue "selected" marker
         datasource.add(new atlas.data.Feature(
           new atlas.data.Point(coords),
           { markerType: 'selected', title: 'Selected Location' }
         ));
         map.setCamera({ center: coords, zoom: 14 });
-
-        // Fetch restaurant and hotel data but do not display markers yet
+        // Fetch restaurant and hotel data (store globally but do not display markers yet)
         fetchAndStoreRestaurantsHotels(lat, lon);
       });
     }
 
-    // Fetch restaurant/hotel data (store globally) based on selected location.
+    // Fetch and store restaurant and hotel data from the backend.
     function fetchAndStoreRestaurantsHotels(lat, lon) {
       fetch('http://127.0.0.1:5000/search_location', {
         method: 'POST',
@@ -229,14 +222,14 @@
           console.error("Error from /search_location:", data.error);
           return;
         }
-        // Now fetch the restaurant and hotel data and store them globally
+        // Once location search is done, fetch restaurant and hotel JSON data.
         loadRestaurantData();
         loadHotelData();
       })
       .catch(err => console.error("Error calling /search_location:", err));
     }
 
-    // Remove markers with a specific markerType from datasource
+    // Remove markers with a specific markerType
     function removeMarkers(markerType) {
       const shapes = datasource.getShapes();
       shapes.forEach(shape => {
@@ -246,7 +239,7 @@
       });
     }
 
-    // Remove all markers except the "selected" one
+    // Remove all markers except the "selected" marker
     function clearNonSelectedMarkers() {
       const shapes = datasource.getShapes();
       shapes.forEach(shape => {
@@ -256,7 +249,7 @@
       });
     }
 
-    // Fetch restaurant data and store it globally (do not add markers yet)
+    // Load restaurant data from /restaurant_data endpoint.
     function loadRestaurantData() {
       fetch('http://127.0.0.1:5000/restaurant_data')
         .then(resp => resp.json())
@@ -266,11 +259,12 @@
             return;
           }
           restaurantData = data;
+          console.log("Restaurant Data:", restaurantData);
         })
         .catch(err => console.error("Error loading restaurant data:", err));
     }
 
-    // Fetch hotel data and store it globally (do not add markers yet)
+    // Load hotel data from /hotel_data endpoint.
     function loadHotelData() {
       fetch('http://127.0.0.1:5000/hotel_data')
         .then(resp => resp.json())
@@ -280,19 +274,26 @@
             return;
           }
           hotelData = data;
+          console.log("Hotel Data:", hotelData);
         })
         .catch(err => console.error("Error loading hotel data:", err));
     }
 
-    // Button function: Show restaurants (red markers) and remove other non-selected markers
+    // Button function: Show restaurant markers (red)
     function showRestaurants() {
       clearNonSelectedMarkers();
+      if (restaurantData.length === 0) {
+        console.warn("No restaurant data available.");
+      }
       addMarkersToMap(restaurantData, 'restaurant');
     }
 
-    // Button function: Show hotels (green markers) and remove other non-selected markers
+    // Button function: Show hotel markers (green)
     function showHotels() {
       clearNonSelectedMarkers();
+      if (hotelData.length === 0) {
+        console.warn("No hotel data available.");
+      }
       addMarkersToMap(hotelData, 'hotel');
     }
 
@@ -303,8 +304,6 @@
         alert("Please enter something to search, e.g., coffee or arcade.");
         return;
       }
-
-      // Ensure a location is set
       const selectedFeature = datasource.getShapes().find(
         shape => shape.getProperties().markerType === 'selected'
       );
@@ -312,10 +311,7 @@
         alert("Please pick or set a location first.");
         return;
       }
-
-      // Remove restaurant and hotel markers before showing custom search results
       clearNonSelectedMarkers();
-
       const [lng, lat] = selectedFeature.getCoordinates();
       fetch('http://127.0.0.1:5000/fetching_data', {
         method: 'POST',
@@ -328,9 +324,10 @@
           console.error("Error from /fetching_data:", data.error);
           return;
         }
-        // data is expected to come from result.json; add custom markers (yellow)
+        console.log("Custom search data:", data);
+        // Add custom markers (yellow)
         addMarkersToMap(data, 'custom');
-        // Optionally, zoom out to show all markers
+        // Optionally, adjust camera to show all markers
         map.setCamera({
           bounds: atlas.data.BoundingBox.fromData(datasource.getShapes()),
           padding: 50
@@ -339,7 +336,7 @@
       .catch(err => console.error("Error searching custom query:", err));
     }
 
-    // Helper function to add multiple markers to the map with the given markerType
+    // Helper function to add markers to the map
     function addMarkersToMap(dataArray, markerType) {
       if (!Array.isArray(dataArray) || dataArray.length === 0) {
         console.warn(`No data for markerType=${markerType}.`);
